@@ -44,6 +44,7 @@ Thumbs.db
 /build/
 /dist/
 /bin/
+/data/
 
 # Environment files
 .env
