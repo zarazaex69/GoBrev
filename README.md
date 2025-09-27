@@ -1,1 +1,1 @@
-GoBrev - еще не написано не одной строчки кода 
+# GoBrev - Telegram Bot на Go
