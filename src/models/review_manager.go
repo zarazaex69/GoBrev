@@ -130,8 +130,10 @@ func (rm *ReviewManager) GetMessagesAfterLastReview(chatID int64, limit int) ([]
 	lastReviewTime, err := rm.GetLastReviewTime(chatID)
 	if err != nil {
 		fmt.Printf("[-] Failed to get last review time: %v, using all unused messages\n", err)
-		return rm.GetUnusedMessages(chatID, limit)
+		return rm.GetUnusedMessages(chatID, 0) // 0 = no limit for first review
 	}
+	
+	fmt.Printf("[i] Last review time for chat %d: %d (%s)\n", chatID, lastReviewTime, time.Unix(lastReviewTime, 0).Format("2006-01-02 15:04:05"))
 	
 	var messages []ReviewMessage
 	
@@ -152,8 +154,19 @@ func (rm *ReviewManager) GetMessagesAfterLastReview(chatID int64, limit int) ([]
 				}
 				
 				// Filter by chat ID and timestamp after last review
-				if message.ChatID == chatID && message.Timestamp > lastReviewTime {
-					messages = append(messages, message)
+				if message.ChatID == chatID {
+					if message.Timestamp > lastReviewTime {
+						fmt.Printf("[+] Including message from %s at %s: %s\n", 
+							message.Username, 
+							time.Unix(message.Timestamp, 0).Format("15:04:05"),
+							message.Content[:min(50, len(message.Content))])
+						fmt.Printf("[+] Including message from %s at %s: %.50s\n", message.Username, time.Unix(message.Timestamp, 0).Format("15:04:05"), message.Content)
+						messages = append(messages, message)
+					} else {
+						fmt.Printf("[-] Skipping old message from %s at %s\n", 
+							message.Username, 
+							time.Unix(message.Timestamp, 0).Format("15:04:05"))
+					}
 				}
 				
 				return nil
@@ -184,6 +197,7 @@ func (rm *ReviewManager) GetMessagesAfterLastReview(chatID int64, limit int) ([]
 	if limit > 0 && len(messages) > limit {
 		messages = messages[:limit]
 	}
+		fmt.Printf("[i] Found %d messages after last review\n", len(messages))
 	
 	return messages, nil
 }

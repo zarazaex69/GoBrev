@@ -54,8 +54,8 @@ func (cmd *ReviewCommand) Execute(c telebot.Context, metrics *models.Metrics) er
 	// Check if user is admin
 	isAdmin := cmd.isUserAdmin(c, chatID, userID)
 
-	// Get messages after last review
-	messages, err := cmd.reviewManager.GetMessagesAfterLastReview(chatID, 50) // Get up to 50 messages
+	// Get ALL messages after last review (no limit)
+	messages, err := cmd.reviewManager.GetMessagesAfterLastReview(chatID, 0) // 0 = no limit
 	if err != nil {
 		_, editErr := c.Bot().Edit(generatingMsg, "❌ <b>Ошибка получения сообщений:</b> <code>"+err.Error()+"</code>", &telebot.SendOptions{
 			ParseMode: telebot.ModeHTML,
