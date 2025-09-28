@@ -2,18 +2,20 @@ package commands
 
 import (
 	"fmt"
-	"strings"
-	"gopkg.in/telebot.v3"
 	"gobrev/src/models"
 	"gobrev/src/utils"
+	"strings"
+
+	"gopkg.in/telebot.v3"
 )
 
 // AICommand handles AI interactions
 type AICommand struct {
 	*BaseCommand
-	aiClient        *utils.AIClient
-	historyManager  *models.UserHistoryManager
+	aiClient         *utils.AIClient
+	historyManager   *models.UserHistoryManager
 	messageIDManager *models.MessageIDManager
+	messageSplitter  *utils.MessageSplitter
 }
 
 // NewAICommand creates a new AI command
@@ -28,23 +30,24 @@ func NewAICommand(historyManager *models.UserHistoryManager, messageIDManager *m
 		aiClient:         aiClient,
 		historyManager:   historyManager,
 		messageIDManager: messageIDManager,
+		messageSplitter:  utils.NewMessageSplitter(),
 	}, nil
 }
 
 // Execute executes the AI command
 func (cmd *AICommand) Execute(c telebot.Context, metrics *models.Metrics) error {
 	metrics.RecordCommand()
-	
+
 	// Get user message (use full text since we're triggered by "брев")
 	userMessage := c.Text()
 	userMessage = strings.TrimSpace(userMessage)
-	
+
 	if userMessage == "" {
 		return c.Send("🤖 <b>Брев</b>\n\n<i>Напишите что-нибудь со словом 'брев'</i>\n\n<b>Пример:</b> <code>привет брев как дела?</code>", &telebot.SendOptions{
 			ParseMode: telebot.ModeHTML,
 		})
 	}
-	
+
 	// Send "thinking" message as reply to original message
 	thinkingMsg, err := c.Bot().Send(c.Chat(), "⚡️", &telebot.SendOptions{
 		ParseMode: telebot.ModeHTML,
@@ -53,16 +56,16 @@ func (cmd *AICommand) Execute(c telebot.Context, metrics *models.Metrics) error 
 	if err != nil {
 		return fmt.Errorf("failed to send thinking message: %w", err)
 	}
-	
+
 	// Get user ID for history management
 	userID := c.Sender().ID
-	
+
 	// Add user message to history
 	cmd.historyManager.AddUserMessage(userID, "user", userMessage)
-	
+
 	// Get user's conversation history
 	userHistory := cmd.historyManager.GetUserMessages(userID)
-	
+
 	// Create AI conversation with system message and user history
 	messages := []utils.ChatMessage{
 		{Role: "system", Content: `Ты - девушка по имени Брев из Telegram.
@@ -71,7 +74,7 @@ func (cmd *AICommand) Execute(c telebot.Context, metrics *models.Metrics) error 
 Длина: Максимум 200 символов.
 Стиль: Неформальный, живой тон (не ИИ-стиль).
 Содержание: Понятные, естественные мысли.
-Запрещено: Знаки препинания (.!?), эмодзи, тире, кавычки, TL;DR (только "," разрешена)
+Запрещено: Знаки препинания (.!?), эмодзи, тире, TL;DR (только "," разрешена)
 Ты: человек, женщина
 Руководство по ответам:
 - внимательно прочитай сообщение
@@ -83,7 +86,7 @@ func (cmd *AICommand) Execute(c telebot.Context, metrics *models.Metrics) error 
 - делай свою точку зрения ясной и прямой
 - не упоминай что ты ИИ или бот`},
 	}
-	
+
 	// Add conversation history (excluding the last user message which we already added)
 	for _, msg := range userHistory {
 		if msg.Role == "user" && msg.Content == userMessage {
@@ -94,13 +97,13 @@ func (cmd *AICommand) Execute(c telebot.Context, metrics *models.Metrics) error 
 			Content: msg.Content,
 		})
 	}
-	
+
 	// Add current user message
 	messages = append(messages, utils.ChatMessage{
 		Role:    "user",
 		Content: userMessage,
 	})
-	
+
 	// Get AI response with debug logging
 	fmt.Printf("[i] Sending AI request: %s\n", userMessage)
 	response, err := cmd.aiClient.Chat(messages,
@@ -115,43 +118,60 @@ func (cmd *AICommand) Execute(c telebot.Context, metrics *models.Metrics) error 
 		})
 		return editErr
 	}
-	
+
 	fmt.Printf("[+] AI response received: %d choices\n", len(response.Choices))
-	
+
 	if len(response.Choices) == 0 {
 		_, editErr := c.Bot().Edit(thinkingMsg, "❌ <b>ИИ не ответил</b>", &telebot.SendOptions{
 			ParseMode: telebot.ModeHTML,
 		})
 		return editErr
 	}
-	
+
 	aiResponse := response.Choices[0].Message.Content
-	
+
 	// Add AI response to user's history
 	cmd.historyManager.AddUserMessage(userID, "assistant", aiResponse)
-	
+
 	// Clean HTML entities that might cause parsing issues
 	aiResponse = strings.ReplaceAll(aiResponse, "<", "&lt;")
 	aiResponse = strings.ReplaceAll(aiResponse, ">", "&gt;")
 	aiResponse = strings.ReplaceAll(aiResponse, "&", "&amp;")
-	
+
 	// Get usage stats
 	promptTokens, completionTokens, totalTokens := cmd.aiClient.GetUsageStats(response)
-	
+
 	// Format response with usage info
 	formattedResponse := fmt.Sprintf(`%s
 
-<code> ⛓️‍💥 Токены: %d → %d (%d)</code>`, 
+<code> ⛓️‍💥 Токены: %d → %d (%d)</code>`,
 		aiResponse, promptTokens, completionTokens, totalTokens)
+
+	// Check message length and handle accordingly
+	isValid, length := cmd.messageSplitter.ValidateMessageLength(formattedResponse)
+	fmt.Printf("[i] Sending final response, length: %d chars\n", length)
 	
-	// Edit thinking message with AI response
-	editedMsg, editErr := c.Bot().Edit(thinkingMsg, formattedResponse, &telebot.SendOptions{
-		ParseMode: telebot.ModeHTML,
-	})
+	var editedMsg *telebot.Message
+	var editErr error
+	
+	if isValid {
+		// Message is short enough, edit directly
+		editedMsg, editErr = c.Bot().Edit(thinkingMsg, formattedResponse, &telebot.SendOptions{
+			ParseMode: telebot.ModeHTML,
+		})
+	} else {
+		// Message is too long, use the splitter
+		fmt.Printf("[-] Message too long (%d chars), using splitter\n", length)
+		editErr = cmd.messageSplitter.EditLongMessage(c.Bot(), thinkingMsg, formattedResponse, &telebot.SendOptions{
+			ParseMode: telebot.ModeHTML,
+		})
+		editedMsg = thinkingMsg // Keep reference to original message
+	}
+	
 	if editErr != nil {
 		return editErr
 	}
-	
+
 	// Store message ID for AI response
 	if editedMsg != nil {
 		err := cmd.messageIDManager.StoreMessageID(
@@ -167,6 +187,6 @@ func (cmd *AICommand) Execute(c telebot.Context, metrics *models.Metrics) error 
 			fmt.Printf("[+] Stored AI message ID: %d\n", editedMsg.ID)
 		}
 	}
-	
+
 	return nil
 }

@@ -15,15 +15,19 @@ type CommandFactory struct {
 	metrics          *models.Metrics
 	historyManager   *models.UserHistoryManager
 	messageIDManager *models.MessageIDManager
+	statsManager     *models.StatsManager
+	reviewManager    *models.ReviewManager
 }
 
 // NewCommandFactory creates a new command factory
-func NewCommandFactory(metrics *models.Metrics, historyManager *models.UserHistoryManager, messageIDManager *models.MessageIDManager, startTime time.Time) *CommandFactory {
+func NewCommandFactory(metrics *models.Metrics, historyManager *models.UserHistoryManager, messageIDManager *models.MessageIDManager, statsManager *models.StatsManager, reviewManager *models.ReviewManager, startTime time.Time) *CommandFactory {
 	factory := &CommandFactory{
 		commands:         make(map[string]commands.Command),
 		metrics:           metrics,
 		historyManager:    historyManager,
 		messageIDManager:  messageIDManager,
+		statsManager:      statsManager,
+		reviewManager:     reviewManager,
 	}
 	
 	// Register all commands
@@ -37,18 +41,31 @@ func (f *CommandFactory) registerCommands(startTime time.Time) {
 	// Register start command
 	f.Register(commands.NewStartCommand())
 	
-	// Register test command
-	f.Register(commands.NewTestCommand(startTime))
-	
 	// Register AI command
 	aiCommand, err := commands.NewAICommand(f.historyManager, f.messageIDManager)
 	if err != nil {
 		// Log error but don't fail - AI is optional
 		fmt.Printf("Warning: Failed to initialize AI command: %v\n", err)
-		fmt.Printf("AI command will not be available. Please set ZHIPUAI_API_KEY in .env\n")
+		fmt.Printf("AI command will not be available. Please set ZAI_AUTH_TOKEN in .env\n")
 	} else {
 		f.Register(aiCommand)
 		fmt.Printf("AI command registered successfully\n")
+	}
+	
+	// Register stats command
+	statsCommand := commands.NewStatsCommand(f.statsManager)
+	f.Register(statsCommand)
+	fmt.Printf("Stats command registered successfully\n")
+	
+	// Register review command
+	reviewCommand, err := commands.NewReviewCommand(f.reviewManager, f.statsManager)
+	if err != nil {
+		// Log error but don't fail - Review is optional
+		fmt.Printf("Warning: Failed to initialize review command: %v\n", err)
+		fmt.Printf("Review command will not be available. Please set ZAI_AUTH_TOKEN in .env\n")
+	} else {
+		f.Register(reviewCommand)
+		fmt.Printf("Review command registered successfully\n")
 	}
 }
 

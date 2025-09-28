@@ -170,3 +170,8 @@ func (mim *MessageIDManager) GetMessageCount() (int, error) {
 	
 	return count, err
 }
+
+// GetDB returns the underlying BadgerDB instance
+func (mim *MessageIDManager) GetDB() *badger.DB {
+	return mim.db
+}

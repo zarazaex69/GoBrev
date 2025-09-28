@@ -32,6 +32,12 @@ func main() {
 	}
 	defer messageIDManager.Close()
 	
+	// Create stats manager (reuse the same BadgerDB instance)
+	statsManager := models.NewStatsManager(messageIDManager.GetDB())
+	
+	// Create review manager (reuse the same BadgerDB instance)
+	reviewManager := models.NewReviewManager(messageIDManager.GetDB())
+	
 	// Setup bot
 	bot, err := telebot.NewBot(telebot.Settings{
 		Token:  cfg.BotToken,
@@ -45,7 +51,7 @@ func main() {
 	middleware.SetupMiddleware(bot, metrics)
 	
 	// Register handlers
-	handlers.SetupHandlers(bot, metrics, historyManager, messageIDManager, cfg.StartTime)
+	handlers.SetupHandlers(bot, metrics, historyManager, messageIDManager, statsManager, reviewManager, cfg.StartTime)
 	
 	// Setup graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())

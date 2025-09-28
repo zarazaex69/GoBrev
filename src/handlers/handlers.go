@@ -51,22 +51,31 @@ func isReplyToBot(c telebot.Context, messageIDManager *models.MessageIDManager) 
 }
 
 // SetupHandlers registers all command handlers using command factory
-func SetupHandlers(bot *telebot.Bot, metrics *models.Metrics, historyManager *models.UserHistoryManager, messageIDManager *models.MessageIDManager, startTime time.Time) {
+func SetupHandlers(bot *telebot.Bot, metrics *models.Metrics, historyManager *models.UserHistoryManager, messageIDManager *models.MessageIDManager, statsManager *models.StatsManager, reviewManager *models.ReviewManager, startTime time.Time) {
 	// Create command factory
-	cmdFactory := factory.NewCommandFactory(metrics, historyManager, messageIDManager, startTime)
+	cmdFactory := factory.NewCommandFactory(metrics, historyManager, messageIDManager, statsManager, reviewManager, startTime)
 	
 	// Register each command individually
 	bot.Handle("/start", func(c telebot.Context) error {
 		return cmdFactory.Execute("/start", c)
 	})
 	
-	bot.Handle("/test", func(c telebot.Context) error {
-		return cmdFactory.Execute("/test", c)
+	// Register stats command
+	bot.Handle(".стат", func(c telebot.Context) error {
+		return cmdFactory.Execute(".стат", c)
+	})
+	
+	// Register review command
+	bot.Handle(".рев", func(c telebot.Context) error {
+		return cmdFactory.Execute(".рев", c)
 	})
 	
 	// Register AI command with text handler
 	bot.Handle(telebot.OnText, func(c telebot.Context) error {
 		text := c.Text()
+		
+		// Process message for statistics (always)
+		processMessageForStats(c, statsManager, reviewManager)
 		
 		// Check if message contains "брев" in any form
 		if containsBrev(text) {
@@ -91,4 +100,54 @@ func SetupHandlers(bot *telebot.Bot, metrics *models.Metrics, historyManager *mo
 		// Ignore other messages
 		return nil
 	})
+}
+
+// processMessageForStats processes a message for statistics and review
+func processMessageForStats(c telebot.Context, statsManager *models.StatsManager, reviewManager *models.ReviewManager) {
+	// Only process text messages
+	if c.Text() == "" {
+		return
+	}
+	
+	// Skip bot messages
+	if c.Sender().IsBot {
+		return
+	}
+	
+	// Skip commands
+	text := strings.TrimSpace(c.Text())
+	if strings.HasPrefix(text, "/") || strings.HasPrefix(text, ".") {
+		return
+	}
+	
+	// Get user info
+	user := c.Sender()
+	chatID := c.Chat().ID
+	userID := user.ID
+	
+	// Build username
+	username := user.FirstName
+	if user.LastName != "" {
+		username += " " + user.LastName
+	}
+	if username == "" {
+		username = user.Username
+	}
+	if username == "" {
+		username = "Anonymous"
+	}
+	
+	// Add message to statistics
+	err := statsManager.AddMessage(chatID, userID, username, text)
+	if err != nil {
+		fmt.Printf("[-] Failed to add message to stats: %v\n", err)
+		// Don't return error to avoid breaking the bot
+	}
+	
+	// Add message to review manager
+	err = reviewManager.AddMessage(chatID, userID, username, text)
+	if err != nil {
+		fmt.Printf("[-] Failed to add message to review: %v\n", err)
+		// Don't return error to avoid breaking the bot
+	}
 }
