@@ -144,8 +144,35 @@ func processMessageForStats(c telebot.Context, statsManager *models.StatsManager
 		// Don't return error to avoid breaking the bot
 	}
 	
+	// Extract reply information
+	var replyToMessageID, replyToUsername, replyToContent string
+	if c.Message().ReplyTo != nil {
+		replyMsg := c.Message().ReplyTo
+		replyToMessageID = fmt.Sprintf("%d", replyMsg.ID)
+		
+		// Get reply author username
+		if replyMsg.Sender != nil {
+			replyToUsername = replyMsg.Sender.FirstName
+			if replyMsg.Sender.LastName != "" {
+				replyToUsername += " " + replyMsg.Sender.LastName
+			}
+			if replyToUsername == "" {
+				replyToUsername = replyMsg.Sender.Username
+			}
+			if replyToUsername == "" {
+				replyToUsername = "Anonymous"
+			}
+		}
+		
+		// Get reply content (truncate if too long)
+		replyToContent = replyMsg.Text
+		if len(replyToContent) > 100 {
+			replyToContent = replyToContent[:100] + "..."
+		}
+	}
+
 	// Add message to review manager
-	err = reviewManager.AddMessage(chatID, userID, username, text)
+	err = reviewManager.AddMessage(chatID, userID, username, text, replyToMessageID, replyToUsername, replyToContent)
 	if err != nil {
 		fmt.Printf("[-] Failed to add message to review: %v\n", err)
 		// Don't return error to avoid breaking the bot

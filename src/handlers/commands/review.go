@@ -79,7 +79,16 @@ func (cmd *ReviewCommand) Execute(c telebot.Context, metrics *models.Metrics) er
 		timestamp := time.Unix(msg.Timestamp, 0)
 		timeStr := timestamp.Format("15:04")
 		
-		formattedMsg := fmt.Sprintf("[%s] (%s): %s", msg.Username, timeStr, msg.Content)
+		var formattedMsg string
+		if msg.ReplyToMessageID != "" {
+			// Message with reply: [Username] (время) отвечает на [ReplyUsername]: "ReplyContent" -> сообщение
+			formattedMsg = fmt.Sprintf("[%s] (%s) отвечает на [%s]: \"%s\" -> %s", 
+				msg.Username, timeStr, msg.ReplyToUsername, msg.ReplyToContent, msg.Content)
+		} else {
+			// Regular message: [Username] (время): сообщение
+			formattedMsg = fmt.Sprintf("[%s] (%s): %s", msg.Username, timeStr, msg.Content)
+		}
+		
 		messageTexts = append(messageTexts, formattedMsg)
 		messageIDs = append(messageIDs, msg.MessageID)
 	}
@@ -173,15 +182,16 @@ func (cmd *ReviewCommand) createDailyNewsPrompt(messages []string, isAdmin bool)
 
 ТРЕБОВАНИЯ К ОТВЕТУ:
 1. Создай РАЗВЕРНУТЫЙ и ДЕТАЛЬНЫЙ обзор событий в чате (не менее 800-1500 символов)
-2. Выдели ВСЕ интересные моменты, темы, обсуждения, конфликты, шутки
+2. Выдели ВСЕ интересные моменты, темы, обсуждения, конфликты, шутки, ОТВЕТЫ НА СООБЩЕНИЯ
 3. Обязательно упоминай авторов сообщений по именам и описывай их действия
-4. Используй живой, неформальный, журналистский стиль с элементами юмора
-5. Добавляй эмоциональные комментарии и оценки происходящего
-6. Форматируй текст в Markdown:
+4. Анализируй ДИАЛОГИ и ОТВЕТЫ между пользователями (когда кто-то отвечает на сообщение)
+5. Используй живой, неформальный, журналистский стиль с элементами юмора
+6. Добавляй эмоциональные комментарии и оценки происходящего
+7. Форматируй текст в Markdown:
    - Используй *жирный текст* для выделения важных моментов
-   - Для цитирования сообщений используй четыре обратные кавычки в начале и в конце
+   - Для цитирования сообщений используй формат: @username: текст сообщения (в четырех обратных кавычках)
    - Используй заголовки ## для разделения тем
-7. Язык: русский
+8. Язык: русский
 
 СТРУКТУРА ОТВЕТА:
 - Яркое введение с оценкой общей атмосферы дня
@@ -194,9 +204,8 @@ func (cmd *ReviewCommand) createDailyNewsPrompt(messages []string, isAdmin bool)
 СТИЛЬ: Пиши как популярный блогер - живо, с юмором, подробно, интересно!
 
 ПРИМЕР ЦИТИРОВАНИЯ:
-Иван написал:
 ` + "````" + `
-Привет всем!
+@Иван: Привет всем!
 ` + "````" + `
 
 Создай МАКСИМАЛЬНО ПОДРОБНЫЕ и увлекательные "дейли новости" этого чата!`
