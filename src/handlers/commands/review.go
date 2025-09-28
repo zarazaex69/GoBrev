@@ -48,14 +48,14 @@ func (cmd *ReviewCommand) Execute(c telebot.Context, metrics *models.Metrics) er
 		return fmt.Errorf("failed to send generating message: %w", err)
 	}
 
-	chatID := c.Chat().ID
 	userID := c.Sender().ID
+	chatID := c.Chat().ID
 	
 	// Check if user is admin
 	isAdmin := cmd.isUserAdmin(c, chatID, userID)
 
-	// Get unused messages from the database
-	messages, err := cmd.reviewManager.GetUnusedMessages(chatID, 50) // Get up to 50 messages
+	// Get messages after last review
+	messages, err := cmd.reviewManager.GetMessagesAfterLastReview(chatID, 50) // Get up to 50 messages
 	if err != nil {
 		_, editErr := c.Bot().Edit(generatingMsg, "❌ <b>Ошибка получения сообщений:</b> <code>"+err.Error()+"</code>", &telebot.SendOptions{
 			ParseMode: telebot.ModeHTML,
@@ -144,7 +144,22 @@ func (cmd *ReviewCommand) Execute(c telebot.Context, metrics *models.Metrics) er
 		}
 		
 		// Send in parts
-		return cmd.sendLongMessage(c, finalResponse)
+		err = cmd.sendLongMessage(c, finalResponse)
+		if err != nil {
+			return err
+		}
+		
+		// Save current time as last review time
+		currentTime := time.Now().Unix()
+		err = cmd.reviewManager.SetLastReviewTime(chatID, currentTime)
+		if err != nil {
+			fmt.Printf("[-] Failed to save last review time: %v\n", err)
+		} else {
+			fmt.Printf("[+] Last review time saved: %d\n", currentTime)
+		}
+		
+		fmt.Printf("[+] Daily news generated successfully for %d messages\n", len(messages))
+		return nil
 	}
 
 	// Edit message with final response
@@ -157,6 +172,16 @@ func (cmd *ReviewCommand) Execute(c telebot.Context, metrics *models.Metrics) er
 	}
 	
 	fmt.Printf("[+] Message edited successfully\n")
+
+	// Save current time as last review time
+	currentTime := time.Now().Unix()
+	err = cmd.reviewManager.SetLastReviewTime(chatID, currentTime)
+	if err != nil {
+		fmt.Printf("[-] Failed to save last review time: %v\n", err)
+		// Don't return error, just log it
+	} else {
+		fmt.Printf("[+] Last review time saved: %d\n", currentTime)
+	}
 
 	fmt.Printf("[+] Daily news generated successfully for %d messages\n", len(messages))
 	return nil

@@ -3,6 +3,7 @@ package models
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
@@ -106,10 +107,10 @@ func (rm *ReviewManager) GetUnusedMessages(chatID int64, limit int) ([]ReviewMes
 		return nil, err
 	}
 	
-	// Sort by timestamp (newest first)
+	// Sort by timestamp (oldest first - chronological order)
 	for i := 0; i < len(messages)-1; i++ {
 		for j := 0; j < len(messages)-i-1; j++ {
-			if messages[j].Timestamp < messages[j+1].Timestamp {
+			if messages[j].Timestamp > messages[j+1].Timestamp {
 				messages[j], messages[j+1] = messages[j+1], messages[j]
 			}
 		}
@@ -121,6 +122,101 @@ func (rm *ReviewManager) GetUnusedMessages(chatID int64, limit int) ([]ReviewMes
 	}
 	
 	return messages, nil
+}
+
+// GetMessagesAfterLastReview returns messages after the last review timestamp
+func (rm *ReviewManager) GetMessagesAfterLastReview(chatID int64, limit int) ([]ReviewMessage, error) {
+	// Get last review timestamp
+	lastReviewTime, err := rm.GetLastReviewTime(chatID)
+	if err != nil {
+		fmt.Printf("[-] Failed to get last review time: %v, using all unused messages\n", err)
+		return rm.GetUnusedMessages(chatID, limit)
+	}
+	
+	var messages []ReviewMessage
+	
+	err = rm.db.View(func(txn *badger.Txn) error {
+		opts := badger.DefaultIteratorOptions
+		opts.Prefix = []byte("review_msg_")
+		
+		it := txn.NewIterator(opts)
+		defer it.Close()
+		
+		for it.Rewind(); it.Valid(); it.Next() {
+			item := it.Item()
+			
+			err := item.Value(func(val []byte) error {
+				var message ReviewMessage
+				if err := json.Unmarshal(val, &message); err != nil {
+					return err
+				}
+				
+				// Filter by chat ID and timestamp after last review
+				if message.ChatID == chatID && message.Timestamp > lastReviewTime {
+					messages = append(messages, message)
+				}
+				
+				return nil
+			})
+			
+			if err != nil {
+				return err
+			}
+		}
+		
+		return nil
+	})
+	
+	if err != nil {
+		return nil, err
+	}
+	
+	// Sort by timestamp (oldest first - chronological order)
+	for i := 0; i < len(messages)-1; i++ {
+		for j := 0; j < len(messages)-i-1; j++ {
+			if messages[j].Timestamp > messages[j+1].Timestamp {
+				messages[j], messages[j+1] = messages[j+1], messages[j]
+			}
+		}
+	}
+	
+	// Limit results
+	if limit > 0 && len(messages) > limit {
+		messages = messages[:limit]
+	}
+	
+	return messages, nil
+}
+
+// SetLastReviewTime sets the timestamp of the last review for a chat
+func (rm *ReviewManager) SetLastReviewTime(chatID int64, timestamp int64) error {
+	key := fmt.Sprintf("last_review_%d", chatID)
+	value := fmt.Sprintf("%d", timestamp)
+	
+	return rm.db.Update(func(txn *badger.Txn) error {
+		return txn.Set([]byte(key), []byte(value))
+	})
+}
+
+// GetLastReviewTime gets the timestamp of the last review for a chat
+func (rm *ReviewManager) GetLastReviewTime(chatID int64) (int64, error) {
+	key := fmt.Sprintf("last_review_%d", chatID)
+	var timestamp int64
+	
+	err := rm.db.View(func(txn *badger.Txn) error {
+		item, err := txn.Get([]byte(key))
+		if err != nil {
+			return err
+		}
+		
+		return item.Value(func(val []byte) error {
+			var parseErr error
+			timestamp, parseErr = strconv.ParseInt(string(val), 10, 64)
+			return parseErr
+		})
+	})
+	
+	return timestamp, err
 }
 
 // MarkMessagesAsUsed marks messages as used for review
