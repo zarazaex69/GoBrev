@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"image/jpeg"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -12,6 +14,7 @@ import (
 	"time"
 
 	"github.com/fogleman/gg"
+	"gopkg.in/telebot.v3"
 	"gobrev/src/models"
 )
 
@@ -19,10 +22,11 @@ import (
 type AvatarCache struct {
 	cacheDir string
 	httpClient *http.Client
+	bot *telebot.Bot
 }
 
 // NewAvatarCache creates a new avatar cache
-func NewAvatarCache() *AvatarCache {
+func NewAvatarCache(bot *telebot.Bot) *AvatarCache {
 	cacheDir := ".cache/avatars"
 	os.MkdirAll(cacheDir, 0755)
 	
@@ -31,6 +35,7 @@ func NewAvatarCache() *AvatarCache {
 		httpClient: &http.Client{
 			Timeout: 10 * time.Second,
 		},
+		bot: bot,
 	}
 }
 
@@ -44,8 +49,72 @@ func (ac *AvatarCache) GetUserAvatar(userID int64) (image.Image, error) {
 		return ac.loadImageFromFile(cachePath)
 	}
 	
-	// Avatar not in cache, return error (we'll use placeholder)
+	// Try to download avatar from Telegram
+	if ac.bot != nil {
+		if avatarImg, err := ac.downloadUserAvatar(userID, cachePath); err == nil {
+			return avatarImg, nil
+		}
+	}
+	
+	// Avatar not found
 	return nil, fmt.Errorf("avatar not found")
+}
+
+// downloadUserAvatar downloads user avatar from Telegram and saves to cache
+func (ac *AvatarCache) downloadUserAvatar(userID int64, cachePath string) (image.Image, error) {
+	// Create user object
+	user := &telebot.User{ID: userID}
+	
+	// Get user profile photos
+	photos, err := ac.bot.ProfilePhotosOf(user)
+	if err != nil || len(photos) == 0 {
+		return nil, fmt.Errorf("no profile photos found")
+	}
+	
+	// Get the first (most recent) photo
+	photo := photos[0]
+	
+	// Get the largest photo size (last element in sizes array)
+	largestPhoto := photo
+	
+	// Get file info
+	file, err := ac.bot.FileByID(largestPhoto.FileID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get file info: %w", err)
+	}
+	
+	// Download file
+	resp, err := ac.httpClient.Get(fmt.Sprintf("https://api.telegram.org/file/bot%s/%s", ac.bot.Token, file.FilePath))
+	if err != nil {
+		return nil, fmt.Errorf("failed to download avatar: %w", err)
+	}
+	defer resp.Body.Close()
+	
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("failed to download avatar: status %d", resp.StatusCode)
+	}
+	
+	// Read image data
+	imageData, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read image data: %w", err)
+	}
+	
+	// Decode image
+	img, _, err := image.Decode(bytes.NewReader(imageData))
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode image: %w", err)
+	}
+	
+	// Save to cache
+	go func() {
+		if cacheFile, err := os.Create(cachePath); err == nil {
+			defer cacheFile.Close()
+			jpeg.Encode(cacheFile, img, &jpeg.Options{Quality: 85})
+		}
+	}()
+	
+	return img, nil
 }
 
 // loadImageFromFile loads image from file
@@ -61,7 +130,7 @@ func (ac *AvatarCache) loadImageFromFile(path string) (image.Image, error) {
 }
 
 // GenerateTopUsersImage generates a beautiful image with top users on a podium using gg library
-func GenerateTopUsersImage(users []models.UserStats) ([]byte, error) {
+func GenerateTopUsersImage(users []models.UserStats, bot *telebot.Bot) ([]byte, error) {
 	if len(users) == 0 {
 		return nil, fmt.Errorf("no users provided")
 	}
@@ -75,7 +144,7 @@ func GenerateTopUsersImage(users []models.UserStats) ([]byte, error) {
 	dc := gg.NewContext(width, height)
 	
 	// Create avatar cache
-	avatarCache := NewAvatarCache()
+	avatarCache := NewAvatarCache(bot)
 
 	// 1. Beautiful gradient background
 	gradient := gg.NewLinearGradient(0, 0, 0, height)
@@ -178,10 +247,12 @@ func drawUserAvatar(dc *gg.Context, x, y, radius int, user models.UserStats, cac
 		return
 	}
 	
-	// Draw real avatar
+	// Draw real avatar with proper scaling
 	dc.DrawCircle(float64(x), float64(y), float64(radius))
 	dc.Clip()
-	dc.DrawImage(avatarImg, x-radius, y-radius)
+	
+	// Draw scaled image centered in circle
+	dc.DrawImageAnchored(avatarImg, x, y, 0.5, 0.5)
 	dc.ResetClip()
 	
 	// Draw border
@@ -289,7 +360,7 @@ func getInitials(username string) string {
 		if len(word) > 0 {
 			initials.WriteRune(rune(word[0]))
 		}
-		if initials.Len() >= 2 {
+		if initials.Len() >= min(2, len(words)) {
 			break
 		}
 	}
@@ -313,6 +384,22 @@ func parseColor(hex string) color.RGBA {
 	b := hexToInt(hex[4:6])
 	
 	return color.RGBA{r, g, b, 255}
+}
+
+// min returns the minimum of two integers
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// max returns the maximum of two integers
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 // hexToInt converts hex string to int

@@ -40,7 +40,7 @@ func (cmd *ReviewCommand) Execute(c telebot.Context, metrics *models.Metrics) er
 	metrics.RecordCommand()
 
 	// Send "generating" message
-	generatingMsg, err := c.Bot().Send(c.Chat(), "📰 <b>Генерирую дейли новости чата...</b>", &telebot.SendOptions{
+	generatingMsg, err := cmd.safeSender.SafeBotSend(c.Bot(), c.Chat(), "📰 <b>Генерирую дейли новости чата...</b>", &telebot.SendOptions{
 		ParseMode: telebot.ModeHTML,
 		ReplyTo:   c.Message(),
 	})
@@ -57,7 +57,7 @@ func (cmd *ReviewCommand) Execute(c telebot.Context, metrics *models.Metrics) er
 	// Get ALL messages after last review (no limit)
 	messages, err := cmd.reviewManager.GetMessagesAfterLastReview(chatID, 0) // 0 = no limit
 	if err != nil {
-		_, editErr := c.Bot().Edit(generatingMsg, "❌ <b>Ошибка получения сообщений:</b> <code>"+err.Error()+"</code>", &telebot.SendOptions{
+		_, editErr := cmd.safeSender.SafeEdit(c.Bot(), generatingMsg, "❌ <b>Ошибка получения сообщений:</b> <code>"+err.Error()+"</code>", &telebot.SendOptions{
 			ParseMode: telebot.ModeHTML,
 		})
 		return editErr
@@ -343,32 +343,10 @@ func (cmd *ReviewCommand) fixTagPair(text, openTag, closeTag string) string {
 
 // sendLongMessage splits and sends long messages
 func (cmd *ReviewCommand) sendLongMessage(c telebot.Context, message string) error {
-	const maxLength = 4000
-	
-	if len(message) <= maxLength {
-		return c.Send(message, &telebot.SendOptions{
-			ParseMode: telebot.ModeHTML,
-		})
-	}
-	
-	// Split message into parts
-	parts := cmd.splitMessage(message, maxLength)
-	
-	fmt.Printf("[i] Split message into %d parts\n", len(parts))
-	
-	for i, part := range parts {
-		fmt.Printf("[i] Sending part %d/%d, length: %d chars\n", i+1, len(parts), len(part))
-		err := c.Send(part, &telebot.SendOptions{
-			ParseMode: telebot.ModeHTML,
-		})
-		if err != nil {
-			fmt.Printf("[-] Failed to send part %d: %v\n", i+1, err)
-			return err
-		}
-		fmt.Printf("[+] Part %d sent successfully\n", i+1)
-	}
-	
-	return nil
+	// Use the message splitter which includes UTF-8 validation
+	return cmd.messageSplitter.SendLongMessage(c, message, &telebot.SendOptions{
+		ParseMode: telebot.ModeHTML,
+	})
 }
 
 // splitMessage splits a message into parts respecting HTML tags

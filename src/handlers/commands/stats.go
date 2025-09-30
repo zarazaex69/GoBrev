@@ -33,7 +33,7 @@ func (cmd *StatsCommand) Execute(c telebot.Context, metrics *models.Metrics) err
 	
 	// Check if it's private chat
 	if c.Chat().Type == telebot.ChatPrivate {
-		return c.Send("❌ Команда доступна только в групповых чатах и каналах")
+		return cmd.SafeSend(c, "❌ Команда доступна только в групповых чатах и каналах")
 	}
 	
 	chatID := c.Chat().ID
@@ -45,17 +45,17 @@ func (cmd *StatsCommand) Execute(c telebot.Context, metrics *models.Metrics) err
 	// Get top users
 	topUsers, err := cmd.statsManager.GetTopUsers(chatID, 20, showAllTime)
 	if err != nil {
-		return c.Send("❌ Ошибка получения статистики: " + err.Error())
+		return cmd.SafeSend(c, "❌ Ошибка получения статистики: " + err.Error())
 	}
 	
 	if len(topUsers) == 0 {
-		return c.Send("📊 Пока нет статистики для этого чата. Просто начните общаться!")
+		return cmd.SafeSend(c, "📊 Пока нет статистики для этого чата. Просто начните общаться!")
 	}
 	
 	// Get total messages
 	totalMessages, err := cmd.statsManager.GetTotalMessages(chatID, showAllTime)
 	if err != nil {
-		return c.Send("❌ Ошибка получения статистики: " + err.Error())
+		return cmd.SafeSend(c, "❌ Ошибка получения статистики: " + err.Error())
 	}
 	
 	// Get popular words (only for today)
@@ -65,7 +65,7 @@ func (cmd *StatsCommand) Execute(c telebot.Context, metrics *models.Metrics) err
 	}
 	
 	// Generate image for top 3 users
-	imageBuffer, err := utils.GenerateTopUsersImage(topUsers[:min(3, len(topUsers))])
+	imageBuffer, err := utils.GenerateTopUsersImage(topUsers[:min(3, len(topUsers))], c.Bot())
 	if err != nil {
 		// If image generation fails, send text-only stats
 		return cmd.sendTextStats(c, topUsers, totalMessages, popularWords, showAllTime)
@@ -81,12 +81,14 @@ func (cmd *StatsCommand) Execute(c telebot.Context, metrics *models.Metrics) err
 		caption = cmd.messageSplitter.CleanAndTruncate(caption, utils.SafeCaptionLength)
 	}
 	
-	// Send photo with caption
-	return c.Send(&telebot.Photo{
+	// Send photo with caption using SafeSender
+	photo := &telebot.Photo{
 		File:    telebot.FromReader(bytes.NewReader(imageBuffer)),
 		Caption: caption,
-	}, &telebot.SendOptions{
-		ReplyTo: c.Message(),
+	}
+	return cmd.safeSender.SafeSendPhoto(c, photo, &telebot.SendOptions{
+		ParseMode: telebot.ModeHTML,
+		ReplyTo:   c.Message(),
 	})
 }
 
@@ -140,7 +142,7 @@ func (cmd *StatsCommand) sendTextStats(c telebot.Context, topUsers []models.User
 	isValid, length := cmd.messageSplitter.ValidateMessageLength(messageText)
 	
 	if isValid {
-		return c.Send(messageText, &telebot.SendOptions{
+		return cmd.SafeSend(c, messageText, &telebot.SendOptions{
 			ParseMode: telebot.ModeHTML,
 			ReplyTo:   c.Message(),
 		})

@@ -58,6 +58,7 @@ coverage.html
 # Profiling files
 *.prof
 *.pprof
+.cache/
 
 # Air live reload
 tmp/

@@ -47,26 +47,25 @@ func (cmd *StartCommand) Execute(c telebot.Context, metrics *models.Metrics) err
  
 💡 <b>ИИ • Игры • Модерация</b>`, botName)
 
-	// Add button only for private chats
 	if isPrivate {
 		// Generate dynamic URL for adding bot to group
 		botUsername := botInfo.Username
 		addToGroupURL := fmt.Sprintf("https://t.me/%s?startgroup=true", botUsername)
 
-		return c.Send(message, &telebot.SendOptions{
+		return cmd.SafeSend(c, message, &telebot.SendOptions{
 			ParseMode: telebot.ModeHTML,
 			ReplyMarkup: &telebot.ReplyMarkup{
 				InlineKeyboard: [][]telebot.InlineButton{
-					{{
-						Text: "➕ Добавить в чат",
-						URL:  addToGroupURL}},
+					{
+						{Text: "➕ Добавить в групу", URL: addToGroupURL},
+					},
 				},
 			},
 		})
 	}
 
 	// Send without button for group chats
-	return c.Send(message, &telebot.SendOptions{
+	return cmd.SafeSend(c, message, &telebot.SendOptions{
 		ParseMode: telebot.ModeHTML,
 	})
 }

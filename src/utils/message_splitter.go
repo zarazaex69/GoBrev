@@ -17,11 +17,15 @@ const (
 )
 
 // MessageSplitter handles splitting long messages for Telegram
-type MessageSplitter struct{}
+type MessageSplitter struct{
+	utf8Validator *UTF8Validator
+}
 
 // NewMessageSplitter creates a new message splitter
 func NewMessageSplitter() *MessageSplitter {
-	return &MessageSplitter{}
+	return &MessageSplitter{
+		utf8Validator: NewUTF8Validator(),
+	}
 }
 
 // SplitMessage splits a long message into multiple parts if needed
@@ -82,7 +86,9 @@ func (ms *MessageSplitter) SplitMessage(text string, maxLength int) []string {
 
 // SendLongMessage sends a message, splitting it if necessary
 func (ms *MessageSplitter) SendLongMessage(c telebot.Context, text string, options *telebot.SendOptions) error {
-	parts := ms.SplitMessage(text, SafeMessageLength)
+	// Sanitize text for Telegram
+	sanitizedText := ms.utf8Validator.SanitizeForTelegram(text)
+	parts := ms.SplitMessage(sanitizedText, SafeMessageLength)
 	
 	for i, part := range parts {
 		if i > 0 {
@@ -101,14 +107,17 @@ func (ms *MessageSplitter) SendLongMessage(c telebot.Context, text string, optio
 
 // EditLongMessage edits a message, handling length limits
 func (ms *MessageSplitter) EditLongMessage(bot *telebot.Bot, message *telebot.Message, text string, options *telebot.SendOptions) error {
+	// Sanitize text for Telegram
+	sanitizedText := ms.utf8Validator.SanitizeForTelegram(text)
+	
 	// If the message is short enough, just edit it
-	if utf8.RuneCountInString(text) <= SafeMessageLength {
-		_, err := bot.Edit(message, text, options)
+	if utf8.RuneCountInString(sanitizedText) <= SafeMessageLength {
+		_, err := bot.Edit(message, sanitizedText, options)
 		return err
 	}
 
 	// If too long, edit with truncated version and send continuation
-	parts := ms.SplitMessage(text, SafeMessageLength)
+	parts := ms.SplitMessage(sanitizedText, SafeMessageLength)
 	
 	if len(parts) == 0 {
 		return fmt.Errorf("no parts to send")
@@ -171,14 +180,8 @@ func (ms *MessageSplitter) ValidateCaptionLength(text string) (bool, int) {
 
 // CleanAndTruncate cleans text and truncates if necessary
 func (ms *MessageSplitter) CleanAndTruncate(text string, maxLength int) string {
-	// Clean the text
-	cleaned := strings.TrimSpace(text)
-	cleaned = strings.ReplaceAll(cleaned, "\r\n", "\n")
-	
-	// Remove excessive newlines
-	for strings.Contains(cleaned, "\n\n\n") {
-		cleaned = strings.ReplaceAll(cleaned, "\n\n\n", "\n\n")
-	}
+	// Sanitize for Telegram first
+	cleaned := ms.utf8Validator.SanitizeForTelegram(text)
 	
 	// Truncate if needed
 	return ms.TruncateMessage(cleaned, maxLength)
